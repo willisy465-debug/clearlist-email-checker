@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Clearlist</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,640&family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="8" fill="currentColor"/>
+          <path d="M8 12.5h16v10H8z" fill="none" stroke="#f7f3ea" stroke-width="1.6"/>
+          <path d="M8.5 13 16 18.2 23.5 13" fill="none" stroke="#f7f3ea" stroke-width="1.6"/>
+        </svg>
+        <div>
+          <p class="kicker">List hygiene</p>
+          <h1>Clearlist</h1>
+        </div>
+      </div>
+      <p class="lede">Check a list before it can bounce. Syntax, DNS and MX, an SMTP handshake, and risk signals. No message is sent.</p>
+    </header>
+
+    <ol class="steps">
+      <li>
+        <span>01</span>
+        <strong>Syntax</strong>
+        <p>Format, length, and reserved domains that can never accept mail.</p>
+      </li>
+      <li>
+        <span>02</span>
+        <strong>DNS and MX</strong>
+        <p>The domain exists and publishes mail servers. A null MX is a hard bounce.</p>
+      </li>
+      <li>
+        <span>03</span>
+        <strong>SMTP</strong>
+        <p>Connect, EHLO, MAIL FROM, RCPT TO, then quit. The message is never sent.</p>
+      </li>
+      <li>
+        <span>04</span>
+        <strong>Risk</strong>
+        <p>Known disposable inboxes, typos, role accounts, catch-all servers, and trap-style names.</p>
+      </li>
+    </ol>
+
+    <section class="composer" id="composer">
+      <div class="composer-top">
+        <h2 id="input-label">Addresses</h2>
+        <div class="composer-actions">
+          <button type="button" id="sample">Load examples</button>
+          <button type="button" id="upload">Upload CSV or TXT</button>
+          <input id="file" type="file" hidden accept=".csv,.txt,text/csv,text/plain">
+        </div>
+      </div>
+      <textarea id="input" aria-labelledby="input-label" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="jane@company.com&#10;billing@vendor.co"></textarea>
+      <div class="composer-foot">
+        <p id="count">Add at least one address.</p>
+        <label><input id="opt-smtp" type="checkbox" checked> SMTP handshake</label>
+        <label><input id="opt-catch" type="checkbox" checked> Catch-all probe</label>
+      </div>
+      <details class="settings">
+        <summary>Sender identity for the SMTP probe</summary>
+        <div class="settings-grid">
+          <label>HELO hostname
+            <input id="helo" type="text" autocomplete="off" spellcheck="false" placeholder="yourdomain.com">
+          </label>
+          <label>MAIL FROM
+            <input id="mailfrom" type="text" autocomplete="off" spellcheck="false" placeholder="Empty uses a null sender">
+          </label>
+        </div>
+        <p class="hint">Use your real sending domain if servers refuse a null sender. This only names the probe. Clearlist never issues DATA.</p>
+      </details>
+      <label class="permit">
+        <input id="permit" type="checkbox">
+        I am allowed to verify this list.
+      </label>
+      <div class="run-row">
+        <button type="button" class="primary" id="verify" disabled>Verify list</button>
+        <button type="button" id="stop" hidden>Stop</button>
+        <p class="hint run-hint">Ctrl+Enter verifies. Lists stay in this browser.</p>
+      </div>
+      <div id="banner" class="banner" hidden>
+        <p id="banner-text" aria-live="polite"></p>
+        <button type="button" id="force-smtp" hidden>Try SMTP anyway</button>
+      </div>
+    </section>
+
+    <section id="results" hidden>
+      <div class="results-head">
+        <div>
+          <h2>Results</h2>
+          <p class="legend">Score estimates how likely an address is to accept mail without bouncing. It is not inbox placement. Not confirmed means the mailbox could not be proven, so it was not marked as a bounce.</p>
+        </div>
+        <div id="progress" hidden>
+          <div class="track" aria-hidden="true"><span id="bar"></span></div>
+          <p id="progress-label" aria-live="polite"></p>
+        </div>
+      </div>
+      <div class="stats" id="stats">
+        <button type="button" data-filter="all" class="active">All <b data-count="all">0</b></button>
+        <button type="button" data-filter="send">Safe to send <b data-count="send">0</b></button>
+        <button type="button" data-filter="suppress">Suppress <b data-count="suppress">0</b></button>
+        <button type="button" data-filter="retry">Retry later <b data-count="retry">0</b></button>
+        <button type="button" data-filter="review">Needs review <b data-count="review">0</b></button>
+      </div>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Filter by address or reason" aria-label="Filter results">
+        <div class="downloads">
+          <button type="button" data-download="send">Safe list</button>
+          <button type="button" data-download="suppress">Suppress list</button>
+          <button type="button" data-download="retry">Retry list</button>
+          <button type="button" data-download="review">Review list</button>
+          <button type="button" data-download="csv">Full CSV</button>
+        </div>
+      </div>
+      <div id="list"></div>
+      <p id="empty" hidden>Nothing in this view.</p>
+    </section>
+
+    <footer>
+      <p>Large providers often hide mailbox existence or block port 25. When that happens, Clearlist says the address is not confirmed instead of guessing. A hard bounce is only marked when the address, domain, or server gives a clear refusal.</p>
+    </footer>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
