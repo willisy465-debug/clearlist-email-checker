@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
 import re
 import secrets
 import smtplib
@@ -100,11 +101,14 @@ def probe_port25(refresh: bool = False, proxy_url: str = "") -> tuple[bool, str]
             errors: list[str] = []
             for host in _PROBE_HOSTS:
                 try:
-                    with create_socks5_connection(proxy_cfg, host, 25, timeout=5):
+                    with create_socks5_connection(proxy_cfg, host, 25, timeout=3.5):
                         return True, f"SOCKS5 proxy ({proxy_cfg['host']}:{proxy_cfg['port']}) connected to port 25."
                 except Exception as exc:
                     errors.append(f"{host}: {exc.__class__.__name__}")
             return False, "SOCKS5 proxy could not reach port 25: " + "; ".join(errors)
+
+    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return False, "Serverless cloud runtime detected (outbound TCP port 25 is restricted)."
 
     with _probe_lock:
         now = time.time()
@@ -125,7 +129,7 @@ def _probe_once() -> tuple[bool, str]:
     errors: list[str] = []
     for host in _PROBE_HOSTS:
         try:
-            with socket.create_connection((host, 25), timeout=4):
+            with socket.create_connection((host, 25), timeout=2.0):
                 return True, "Outbound port 25 accepted a connection."
         except socket.timeout:
             errors.append(f"{host} timed out")
@@ -908,7 +912,7 @@ def _cloud_or_alt_port_verify(
             ) | {"host": host}
 
     # First run HTTPS / API / Microsoft 365 / Gravatar / DNS-auth check
-    cloud_res = cloud_verify_fallback(
+    return cloud_verify_fallback(
         recipient,
         ascii_domain,
         hosts,
@@ -917,23 +921,6 @@ def _cloud_or_alt_port_verify(
         mail_from,
         cloud_cfg,
     )
-    if cloud_res["state"] in {"accepted", "rejected", "temporary"}:
-        return cloud_res
-
-    # If still only DNS-level cloud_verified, also try non-25 SMTP ports (587, 2525) in case the MX accepts unauthenticated RCPT TO there
-    for port in (587, 2525):
-        for host in hosts[:1]:
-            if _classify_host(host) != "public":
-                continue
-            try:
-                with _domain_semaphore(ascii_domain):
-                    alt = _smtp_on_host(host, recipient, helo, mail_from, do_catch_all, ascii_domain, port=port, timeout=3.5)
-                if alt["state"] in {"accepted", "rejected", "temporary"}:
-                    return alt
-            except Exception:
-                continue
-
-    return cloud_res
 
 
 def smtp_check(
