@@ -26,6 +26,13 @@ from dataclasses import dataclass
 import dns.exception
 import dns.resolver
 
+from app.cloud_probe import (
+    CloudConfig,
+    cloud_verify_fallback,
+    create_socks5_connection,
+    lookup_email_auth_dns,
+    parse_socks5_url,
+)
 from app.data import (
     ALIAS,
     DISPOSABLE,
@@ -64,6 +71,7 @@ class Job:
     mail_from: str
     smtp_mode: str
     smtp_mode_detail: str
+    cloud_cfg: CloudConfig = CloudConfig()
 
 
 def default_helo() -> str:
@@ -83,8 +91,20 @@ def default_helo() -> str:
     return "clearlist.local"
 
 
-def probe_port25(refresh: bool = False) -> tuple[bool, str]:
-    """See whether this network can open a TCP connection to port 25."""
+def probe_port25(refresh: bool = False, proxy_url: str = "") -> tuple[bool, str]:
+    """See whether this network (or configured SOCKS5 proxy) can reach port 25."""
+
+    if proxy_url.strip():
+        proxy_cfg = parse_socks5_url(proxy_url)
+        if proxy_cfg:
+            errors: list[str] = []
+            for host in _PROBE_HOSTS:
+                try:
+                    with create_socks5_connection(proxy_cfg, host, 25, timeout=5):
+                        return True, f"SOCKS5 proxy ({proxy_cfg['host']}:{proxy_cfg['port']}) connected to port 25."
+                except Exception as exc:
+                    errors.append(f"{host}: {exc.__class__.__name__}")
+            return False, "SOCKS5 proxy could not reach port 25: " + "; ".join(errors)
 
     with _probe_lock:
         now = time.time()
@@ -124,9 +144,20 @@ def begin_job(
     helo: str,
     mail_from: str,
     force_smtp: bool,
+    proxy_url: str = "",
+    api_url: str = "",
+    api_key: str = "",
 ) -> Job:
+    cloud_cfg = CloudConfig.from_request_or_env(
+        proxy_url=proxy_url,
+        api_url=api_url,
+        api_key=api_key,
+    )
     if not smtp:
         mode, detail = "disabled", "SMTP is turned off."
+    elif cloud_cfg.proxy_url:
+        open_, detail = probe_port25(refresh=True, proxy_url=cloud_cfg.proxy_url)
+        mode = "proxy" if open_ else "cloud"
     else:
         open_, detail = probe_port25(refresh=False)
         if open_:
@@ -134,7 +165,12 @@ def begin_job(
         elif force_smtp:
             mode = "forced"
         else:
-            mode = "blocked"
+            mode = "cloud"
+            detail = (
+                "Cloud serverless mode active (Port 443 HTTPS + Port 587/2525 SMTP + DNS SPF/DMARC). "
+                "Direct port 25 is blocked by the cloud host, so Clearlist automatically switches to "
+                "port-25-free verification."
+            )
     return Job(
         smtp=smtp,
         catch_all=catch_all,
@@ -142,6 +178,7 @@ def begin_job(
         mail_from=mail_from,
         smtp_mode=mode,
         smtp_mode_detail=detail,
+        cloud_cfg=cloud_cfg,
     )
 
 
@@ -528,7 +565,7 @@ def evaluate(
     def emit(status: str, action: str, bounce: str, score: int, summary: str) -> dict:
         dns_ok = True if dns["state"] in {"ok", "implicit", "null_mx", "no_mail"} else False if dns["state"] == "nxdomain" else None
         mx_ok = True if dns["state"] == "ok" else False if dns["state"] in {"null_mx", "no_mail", "nxdomain", "implicit"} else None
-        if smtp["state"] == "accepted":
+        if smtp["state"] in {"accepted", "cloud_verified"}:
             smtp_ok = True
         elif smtp["state"] == "rejected":
             smtp_ok = False
@@ -648,6 +685,22 @@ def evaluate(
         else:
             status, action, bounce, score = "safe", "send", "none", 78
             summary = "Syntax, MX, and the SMTP recipient check passed. Catch-all was not tested."
+    elif smtp["state"] == "cloud_verified":
+        auth_dns = smtp.get("auth_dns") or {}
+        if auth_dns.get("has_spf") and auth_dns.get("has_dmarc"):
+            status, action, bounce, score = "safe", "send", "none", 86
+            summary = (
+                "Syntax, MX, SPF, and DMARC passed in cloud mode (port 443/53), "
+                "and no bounce or risk signals were found."
+            )
+        elif auth_dns.get("has_spf") or auth_dns.get("has_dmarc"):
+            status, action, bounce, score = "safe", "send", "none", 82
+            summary = (
+                "Syntax, MX, and domain email authentication records passed in cloud mode (port 443/53)."
+            )
+        else:
+            status, action, bounce, score = "safe", "send", "none", 75
+            summary = "Syntax and MX records passed in cloud mode. No bounce or risk signals were found."
     elif smtp["state"] == "blocked":
         status, action, bounce, score = "unknown", "review", "unknown", 62
         summary = smtp["detail"]
@@ -658,14 +711,14 @@ def evaluate(
         status, action, bounce, score = "unknown", "review", "unknown", 58
         summary = smtp["detail"] or "SMTP was not run, so the mailbox was not confirmed."
 
-    if dns["state"] == "implicit" and status == "safe":
-        status, action, score = "risky", "review", 48
-        summary = (
-            "The server accepted the recipient, but the domain has no MX record and only an address record. "
-            "Treat this as fragile."
-        )
-    elif dns["state"] == "implicit" and status == "unknown":
-        if smtp["state"] == "error":
+    if dns["state"] == "implicit" and status in {"safe", "unknown"}:
+        if smtp["state"] == "accepted":
+            status, action, score = "risky", "review", 48
+            summary = (
+                "The server accepted the recipient, but the domain has no MX record and only an address record. "
+                "Treat this as fragile."
+            )
+        elif smtp["state"] in {"error", "cloud_verified"}:
             status, action, bounce, score = "invalid", "suppress", "hard", 18
             summary = (
                 "No MX record, and the fallback server did not accept an SMTP connection, "
@@ -804,6 +857,16 @@ def _verify_email(raw: str, job: Job) -> dict:
 
     if job.smtp_mode == "disabled":
         smtp = _smtp_shell("skipped", "SMTP is turned off. The mailbox was not confirmed.")
+    elif job.smtp_mode == "cloud":
+        smtp = _cloud_or_alt_port_verify(
+            syntax["email"],
+            dns["hosts"],
+            job.helo,
+            job.mail_from,
+            job.catch_all,
+            syntax["ascii_domain"],
+            job.cloud_cfg,
+        )
     elif job.smtp_mode == "blocked":
         smtp = _smtp_shell(
             "blocked",
@@ -817,12 +880,60 @@ def _verify_email(raw: str, job: Job) -> dict:
             job.mail_from,
             job.catch_all,
             syntax["ascii_domain"],
+            proxy_url=job.cloud_cfg.proxy_url,
         )
     return evaluate(raw, syntax, dns, smtp, risks, suggestion)
 
 
 def _smtp_shell(state: str, detail: str) -> dict:
     return {"state": state, "code": None, "host": None, "detail": detail, "catch_all": None}
+
+
+def _cloud_or_alt_port_verify(
+    recipient: str,
+    hosts: list[str],
+    helo: str,
+    mail_from: str,
+    do_catch_all: bool,
+    ascii_domain: str,
+    cloud_cfg: CloudConfig,
+) -> dict:
+    """When port 25 is blocked on cloud serverless hosts, verify via HTTPS/DNS or alternate SMTP ports (587/2525)."""
+    for host in hosts[:2]:
+        kind = _classify_host(host)
+        if kind == "private":
+            return _smtp_shell(
+                "private",
+                f"Mail server {host} is not on the public internet, so a normal campaign will hard-bounce.",
+            ) | {"host": host}
+
+    # First run HTTPS / API / Microsoft 365 / Gravatar / DNS-auth check
+    cloud_res = cloud_verify_fallback(
+        recipient,
+        ascii_domain,
+        hosts,
+        do_catch_all,
+        helo,
+        mail_from,
+        cloud_cfg,
+    )
+    if cloud_res["state"] in {"accepted", "rejected", "temporary"}:
+        return cloud_res
+
+    # If still only DNS-level cloud_verified, also try non-25 SMTP ports (587, 2525) in case the MX accepts unauthenticated RCPT TO there
+    for port in (587, 2525):
+        for host in hosts[:1]:
+            if _classify_host(host) != "public":
+                continue
+            try:
+                with _domain_semaphore(ascii_domain):
+                    alt = _smtp_on_host(host, recipient, helo, mail_from, do_catch_all, ascii_domain, port=port, timeout=3.5)
+                if alt["state"] in {"accepted", "rejected", "temporary"}:
+                    return alt
+            except Exception:
+                continue
+
+    return cloud_res
 
 
 def smtp_check(
@@ -832,6 +943,7 @@ def smtp_check(
     mail_from: str,
     do_catch_all: bool,
     ascii_domain: str,
+    proxy_url: str = "",
 ) -> dict:
     failures: list[str] = []
     for host in hosts[:3]:
@@ -844,7 +956,15 @@ def smtp_check(
             continue
         try:
             with _domain_semaphore(ascii_domain):
-                outcome = _smtp_on_host(host, recipient, helo, mail_from, do_catch_all, ascii_domain)
+                outcome = _smtp_on_host(
+                    host,
+                    recipient,
+                    helo,
+                    mail_from,
+                    do_catch_all,
+                    ascii_domain,
+                    proxy_url=proxy_url,
+                )
         except smtplib.SMTPHeloError as exc:
             return _policy_result(host, exc.smtp_code, _decode(exc.smtp_error), "The server rejected the HELO name, so the mailbox was not tested.")
         except (socket.timeout, TimeoutError):
@@ -882,6 +1002,22 @@ def smtp_check(
     return _smtp_shell("error", "Could not connect to a mail server, so the mailbox was not confirmed.")
 
 
+def _connect_smtp(host: str, port: int, timeout: float, proxy_url: str = "") -> smtplib.SMTP:
+    proxy_cfg = parse_socks5_url(proxy_url) if proxy_url else None
+    if not proxy_cfg:
+        client = smtplib.SMTP(timeout=timeout)
+        client.connect(host, port)
+        return client
+
+    class ProxiedSMTP(smtplib.SMTP):
+        def _get_socket(self, host_arg, port_arg, timeout_arg):
+            return create_socks5_connection(proxy_cfg, host_arg, port_arg, timeout=timeout_arg or timeout)
+
+    client = ProxiedSMTP(timeout=timeout)
+    client.connect(host, port)
+    return client
+
+
 def _smtp_on_host(
     host: str,
     recipient: str,
@@ -889,10 +1025,12 @@ def _smtp_on_host(
     mail_from: str,
     do_catch_all: bool,
     ascii_domain: str,
+    port: int = 25,
+    timeout: float = 8.0,
+    proxy_url: str = "",
 ) -> dict:
-    client = smtplib.SMTP(timeout=8)
+    client = _connect_smtp(host, port, timeout, proxy_url=proxy_url)
     try:
-        client.connect(host, 25)
         _ehlo(client, helo)
         if client.has_extn("starttls"):
             try:
@@ -900,8 +1038,7 @@ def _smtp_on_host(
                 _ehlo(client, helo)
             except Exception:
                 _safe_close(client)
-                client = smtplib.SMTP(timeout=8)
-                client.connect(host, 25)
+                client = _connect_smtp(host, port, timeout, proxy_url=proxy_url)
                 _ehlo(client, helo)
         code, message = client.mail(mail_from)
         if code >= 400 and mail_from:

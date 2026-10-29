@@ -66,7 +66,7 @@
         <label><input id="opt-catch" type="checkbox" checked> Catch-all probe</label>
       </div>
       <details class="settings">
-        <summary>Sender identity for the SMTP probe</summary>
+        <summary>Sender identity &amp; Cloud Port-25 bypass</summary>
         <div class="settings-grid">
           <label>HELO hostname
             <input id="helo" type="text" autocomplete="off" spellcheck="false" placeholder="yourdomain.com">
@@ -74,8 +74,17 @@
           <label>MAIL FROM
             <input id="mailfrom" type="text" autocomplete="off" spellcheck="false" placeholder="Empty uses a null sender">
           </label>
+          <label>SOCKS5 Proxy (Port-25 tunnel, optional)
+            <input id="proxy-url" type="text" autocomplete="off" spellcheck="false" placeholder="socks5://user:pass@host:1080">
+          </label>
+          <label>HTTPS Verification API URL (optional)
+            <input id="api-url" type="text" autocomplete="off" spellcheck="false" placeholder="https://api.reacher.email/v0/check_email">
+          </label>
+          <label>HTTPS Verification API Key (optional)
+            <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="API key or token">
+          </label>
         </div>
-        <p class="hint">Use your real sending domain if servers refuse a null sender. This only names the probe. Clearlist never issues DATA.</p>
+        <p class="hint">On cloud hosts like Vercel where port 25 is blocked, Clearlist automatically switches to Port-443 HTTPS + Port-587/2525 + DNS SPF/DMARC verification. You can also connect a SOCKS5 proxy or HTTPS relay API (or set <code>SMTP_PROXY_URL</code> / <code>VERIFY_API_URL</code> in Vercel Environment Variables).</p>
       </details>
       <label class="permit">
         <input id="permit" type="checkbox">

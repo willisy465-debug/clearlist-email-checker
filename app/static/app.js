@@ -49,12 +49,18 @@ const smtpBox = document.querySelector("#opt-smtp");
 const catchBox = document.querySelector("#opt-catch");
 const helo = document.querySelector("#helo");
 const mailFrom = document.querySelector("#mailfrom");
+const proxyUrl = document.querySelector("#proxy-url");
+const apiUrl = document.querySelector("#api-url");
+const apiKey = document.querySelector("#api-key");
 const fileInput = document.querySelector("#file");
 const composer = document.querySelector("#composer");
 
 permit.checked = sessionStorage.getItem("clearlist-permit") === "1";
 helo.value = localStorage.getItem("clearlist-helo") || "";
 mailFrom.value = localStorage.getItem("clearlist-mailfrom") || "";
+proxyUrl.value = localStorage.getItem("clearlist-proxy") || "";
+apiUrl.value = localStorage.getItem("clearlist-api-url") || "";
+apiKey.value = sessionStorage.getItem("clearlist-api-key") || "";
 smtpBox.checked = localStorage.getItem("clearlist-smtp") !== "0";
 catchBox.checked = localStorage.getItem("clearlist-catch") !== "0";
 
@@ -351,12 +357,21 @@ async function runVerification() {
           helo: helo.value.trim(),
           mail_from: sender,
           force_smtp: state.forceSmtp,
+          proxy_url: proxyUrl.value.trim(),
+          api_url: apiUrl.value.trim(),
+          api_key: apiKey.value.trim(),
         }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(errorMessage(payload, response.status));
       network = payload.smtp_network || network;
-      if (network === "blocked" && !state.forceSmtp) {
+      if (network === "cloud" && !state.forceSmtp) {
+        showBanner(
+          "Cloud Mode active (Port 443 HTTPS + Port 587/2525 + DNS SPF/DMARC): Direct port 25 is blocked on this host, so Clearlist is verifying mailboxes and domain authentication over HTTPS and DNS.",
+        );
+        forceBtn.hidden = false;
+        chunkSize = 15;
+      } else if (network === "blocked" && !state.forceSmtp) {
         showBanner(
           "This network blocks outbound port 25, so mailbox SMTP checks were skipped. Syntax, DNS, MX, and risk checks still ran. Addresses that fail those checks are unsafe to send. Addresses that pass are not fully confirmed.",
         );
@@ -369,7 +384,7 @@ async function runVerification() {
     bar.style.width = "100%";
     const totals = tally(state.rows);
     progressLabel.textContent = `${totals.send} safe to send, ${totals.suppress} to suppress, ${totals.retry} to retry, ${totals.review} to review.`;
-    if (network === "open" || network === "forced") showBanner("");
+    if (network === "open" || network === "forced" || network === "proxy") showBanner("");
   } catch (error) {
     if (error.name === "AbortError") {
       showBanner("Stopped. Partial results are kept below.");
@@ -391,6 +406,9 @@ permit.addEventListener("change", () => {
 });
 helo.addEventListener("change", () => localStorage.setItem("clearlist-helo", helo.value.trim()));
 mailFrom.addEventListener("change", () => localStorage.setItem("clearlist-mailfrom", mailFrom.value.trim()));
+proxyUrl.addEventListener("change", () => localStorage.setItem("clearlist-proxy", proxyUrl.value.trim()));
+apiUrl.addEventListener("change", () => localStorage.setItem("clearlist-api-url", apiUrl.value.trim()));
+apiKey.addEventListener("change", () => sessionStorage.setItem("clearlist-api-key", apiKey.value.trim()));
 smtpBox.addEventListener("change", () => localStorage.setItem("clearlist-smtp", smtpBox.checked ? "1" : "0"));
 catchBox.addEventListener("change", () => localStorage.setItem("clearlist-catch", catchBox.checked ? "1" : "0"));
 

@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.cloud_probe import parse_socks5_url
 from app.verifier import begin_job, check_syntax, default_helo, verify_email
 
 log = logging.getLogger("clearlist")
@@ -38,6 +39,9 @@ class VerifyRequest(BaseModel):
     helo: str = ""
     mail_from: str = ""
     force_smtp: bool = False
+    proxy_url: str = ""
+    api_url: str = ""
+    api_key: str = ""
 
 
 @app.middleware("http")
@@ -64,12 +68,17 @@ async def verify(body: VerifyRequest) -> dict:
         raise HTTPException(status_code=400, detail="Add at least one address.")
     helo = _validate_helo(body.helo)
     mail_from = _validate_mail_from(body.mail_from)
+    proxy_url = _validate_proxy_url(body.proxy_url)
+    api_url = _validate_api_url(body.api_url)
     job = begin_job(
         smtp=body.smtp,
         catch_all=body.catch_all and body.smtp,
         helo=helo,
         mail_from=mail_from,
         force_smtp=body.force_smtp,
+        proxy_url=proxy_url,
+        api_url=api_url,
+        api_key=body.api_key.strip(),
     )
     log.info("batch size=%s smtp_mode=%s", len(emails), job.smtp_mode)
     loop = asyncio.get_running_loop()
@@ -82,6 +91,33 @@ async def verify(body: VerifyRequest) -> dict:
         "smtp_network_detail": job.smtp_mode_detail,
         "checked": len(results),
     }
+
+
+def _validate_proxy_url(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    if any(char in value for char in "\r\n\x00 "):
+        raise HTTPException(status_code=400, detail="SOCKS5 proxy URL cannot contain spaces.")
+    try:
+        parse_socks5_url(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return value
+
+
+def _validate_api_url(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    if any(char in value for char in "\r\n\x00 "):
+        raise HTTPException(status_code=400, detail="Verification API URL cannot contain spaces.")
+    if not (value.startswith("https://") or value.startswith("http://")):
+        raise HTTPException(
+            status_code=400,
+            detail="Verification API URL must start with https:// or http://.",
+        )
+    return value
 
 
 def _validate_helo(value: str) -> str:

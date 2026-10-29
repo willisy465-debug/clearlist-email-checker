@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.cloud_probe import parse_socks5_url
 from app.verifier import check_syntax, classify_smtp, evaluate
 from app.data import in_domain_set, suggest_typo, DISPOSABLE
 
@@ -110,6 +111,27 @@ def main() -> None:
     assert typo["action"] == "review"
     typo_missing = evaluate("a@gmial.com", syntax, dns("nxdomain", "gmial.com does not exist."), smtp("not_run"), [risk("typo")], "a@gmail.com")
     assert typo_missing["action"] == "suppress"
+
+    cloud_ok = evaluate(
+        "jane@company.com",
+        syntax,
+        mx,
+        {
+            "state": "cloud_verified",
+            "code": 250,
+            "host": "mx.example.net (DNS+SPF+DMARC)",
+            "detail": "Cloud mode verified.",
+            "catch_all": False,
+            "auth_dns": {"has_spf": True, "has_dmarc": True, "spf_strict": True},
+        },
+        [],
+        None,
+    )
+    assert cloud_ok["action"] == "send" and cloud_ok["status"] == "safe" and cloud_ok["score"] == 86
+
+    proxy_parsed = parse_socks5_url("socks5://user:pass@127.0.0.1:1080")
+    assert proxy_parsed and proxy_parsed["host"] == "127.0.0.1" and proxy_parsed["port"] == 1080
+    assert proxy_parsed["username"] == "user"
 
     print("selftest ok")
 
