@@ -52,14 +52,35 @@
 
     <section class="composer" id="composer">
       <div class="composer-top">
-        <h2 id="input-label">Addresses</h2>
+        <h2 id="input-label">Addresses &amp; Bulk Lists (up to 60,000 at a go)</h2>
         <div class="composer-actions">
           <button type="button" id="sample">Load examples</button>
-          <button type="button" id="upload">Upload CSV or TXT</button>
-          <input id="file" type="file" hidden accept=".csv,.txt,text/csv,text/plain">
+          <button type="button" id="upload">Upload up to 3 CSV / TXT lists</button>
+          <button type="button" id="clear-lists" hidden>Clear uploaded lists</button>
+          <input id="file" type="file" multiple hidden accept=".csv,.txt,text/csv,text/plain">
         </div>
       </div>
-      <textarea id="input" aria-labelledby="input-label" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="jane@company.com&#10;billing@vendor.co"></textarea>
+      <div class="slots" id="file-slots">
+        <div class="slot" data-slot="0">
+          <span class="slot-num">List 1</span>
+          <strong class="slot-name" data-slot-name="0">No file uploaded</strong>
+          <span class="slot-meta" data-slot-meta="0">Click to upload CSV/TXT</span>
+          <button type="button" class="slot-remove" data-slot-remove="0" hidden>Remove</button>
+        </div>
+        <div class="slot" data-slot="1">
+          <span class="slot-num">List 2</span>
+          <strong class="slot-name" data-slot-name="1">No file uploaded</strong>
+          <span class="slot-meta" data-slot-meta="1">Click to upload CSV/TXT</span>
+          <button type="button" class="slot-remove" data-slot-remove="1" hidden>Remove</button>
+        </div>
+        <div class="slot" data-slot="2">
+          <span class="slot-num">List 3</span>
+          <strong class="slot-name" data-slot-name="2">No file uploaded</strong>
+          <span class="slot-meta" data-slot-meta="2">Click to upload CSV/TXT</span>
+          <button type="button" class="slot-remove" data-slot-remove="2" hidden>Remove</button>
+        </div>
+      </div>
+      <textarea id="input" aria-labelledby="input-label" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="Paste additional emails here or upload 1–3 CSV/TXT lists above (all lists are merged, deduplicated, and cleaned into one final download)...&#10;jane@company.com&#10;billing@vendor.co"></textarea>
       <div class="composer-foot">
         <p id="count">Add at least one address.</p>
         <label><input id="opt-smtp" type="checkbox" checked> SMTP handshake</label>
@@ -122,16 +143,16 @@
       <div class="clean-panel" id="clean-panel">
         <div class="clean-head">
           <div>
-            <h3>Cleaned list ready for your campaign</h3>
-            <p class="hint" id="clean-summary">Verified safe-to-send addresses appear here automatically as checks complete. Hard bounces, syntax errors, and disposable inboxes are removed.</p>
+            <h3>Final Master Cleaned List (Merged from all uploaded lists)</h3>
+            <p class="hint" id="clean-summary">Verified safe-to-send addresses from all uploaded lists are merged and deduplicated here into one final download. Hard bounces, syntax errors, and disposable inboxes are removed.</p>
           </div>
           <label class="clean-toggle"><input id="include-review" type="checkbox"> Include role &amp; unconfirmed addresses (Needs review)</label>
         </div>
         <textarea id="clean-output" readonly spellcheck="false" rows="5" placeholder="Cleaned deliverable emails will appear here after verification..."></textarea>
         <div class="clean-actions">
-          <button type="button" class="primary" data-download="clean-csv" disabled>Download Clean CSV (<span data-clean-count>0</span>)</button>
-          <button type="button" class="primary" data-download="clean-txt" disabled>Download Clean TXT (<span data-clean-count>0</span>)</button>
-          <button type="button" id="copy-clean" disabled>Copy Clean List</button>
+          <button type="button" class="primary" data-download="clean-csv" disabled>Download Final Clean CSV (<span data-clean-count>0</span>)</button>
+          <button type="button" class="primary" data-download="clean-txt" disabled>Download Final Clean TXT (<span data-clean-count>0</span>)</button>
+          <button type="button" id="copy-clean" disabled>Copy Final Clean List</button>
           <button type="button" data-download="suppress" disabled>Suppress List (.txt)</button>
           <button type="button" data-download="csv" disabled>Full Audit Report (.csv)</button>
         </div>
@@ -145,6 +166,7 @@
         </div>
       </div>
       <div id="list"></div>
+      <p class="hint" id="render-cap-note" hidden></p>
       <p id="empty" hidden>Nothing in this view.</p>
     </section>
 

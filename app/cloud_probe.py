@@ -58,6 +58,7 @@ class CloudConfig:
     proxy_url: str = ""
     api_url: str = ""
     api_key: str = ""
+    fast_bulk: bool = False
 
     @classmethod
     def from_request_or_env(
@@ -65,11 +66,13 @@ class CloudConfig:
         proxy_url: str = "",
         api_url: str = "",
         api_key: str = "",
+        fast_bulk: bool = False,
     ) -> "CloudConfig":
         return cls(
             proxy_url=(proxy_url or os.environ.get("SMTP_PROXY_URL", "")).strip(),
             api_url=(api_url or os.environ.get("VERIFY_API_URL", "")).strip(),
             api_key=(api_key or os.environ.get("VERIFY_API_KEY", "")).strip(),
+            fast_bulk=fast_bulk,
         )
 
 
@@ -492,13 +495,13 @@ def cloud_verify_fallback(
             return ext
 
     # 2. Direct HTTPS verification for Microsoft 365 / Outlook / Hotmail / Live
-    if is_microsoft_hosted(ascii_domain, mx_hosts):
+    if not cloud_cfg.fast_bulk and is_microsoft_hosted(ascii_domain, mx_hosts):
         ms_res = check_microsoft_https(email, ascii_domain, do_catch_all)
         if ms_res is not None:
             return ms_res
 
     # 3. Check Gravatar over HTTPS (port 443) — a positive match proves a real user owns this address
-    has_gravatar = check_gravatar_https(email)
+    has_gravatar = False if cloud_cfg.fast_bulk else check_gravatar_https(email)
     auth_dns = lookup_email_auth_dns(ascii_domain)
 
     if has_gravatar:

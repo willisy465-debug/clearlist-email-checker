@@ -151,11 +151,13 @@ def begin_job(
     proxy_url: str = "",
     api_url: str = "",
     api_key: str = "",
+    fast_bulk: bool = False,
 ) -> Job:
     cloud_cfg = CloudConfig.from_request_or_env(
         proxy_url=proxy_url,
         api_url=api_url,
         api_key=api_key,
+        fast_bulk=fast_bulk,
     )
     if not smtp:
         mode, detail = "disabled", "SMTP is turned off."

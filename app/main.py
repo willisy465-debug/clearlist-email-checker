@@ -20,7 +20,7 @@ from app.verifier import begin_job, check_syntax, default_helo, verify_email
 log = logging.getLogger("clearlist")
 BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
-EXECUTOR = ThreadPoolExecutor(max_workers=6, thread_name_prefix="clearlist")
+EXECUTOR = ThreadPoolExecutor(max_workers=24, thread_name_prefix="clearlist")
 
 
 @asynccontextmanager
@@ -33,7 +33,7 @@ app = FastAPI(title="Clearlist", lifespan=lifespan)
 
 
 class VerifyRequest(BaseModel):
-    emails: list[str] = Field(min_length=1, max_length=100)
+    emails: list[str] = Field(min_length=1, max_length=500)
     smtp: bool = True
     catch_all: bool = True
     helo: str = ""
@@ -42,6 +42,7 @@ class VerifyRequest(BaseModel):
     proxy_url: str = ""
     api_url: str = ""
     api_key: str = ""
+    fast_bulk: bool = False
 
 
 @app.middleware("http")
@@ -79,6 +80,7 @@ async def verify(body: VerifyRequest) -> dict:
         proxy_url=proxy_url,
         api_url=api_url,
         api_key=body.api_key.strip(),
+        fast_bulk=body.fast_bulk or len(emails) >= 60,
     )
     log.info("batch size=%s smtp_mode=%s", len(emails), job.smtp_mode)
     loop = asyncio.get_running_loop()

@@ -9,6 +9,10 @@ const SAMPLE = [
   "info@gmail.com",
 ].join("\n");
 
+const MAX_EMAILS = 60000;
+const MAX_UPLOAD_LISTS = 3;
+const DOM_RENDER_LIMIT = 400;
+
 const VERDICTS = {
   send: ["Safe to send", "safe"],
   suppress: ["Do not send", "bad"],
@@ -30,6 +34,8 @@ const state = {
   running: false,
   abort: null,
   forceSmtp: false,
+  uploadedLists: [null, null, null], // Up to 3 uploaded lists: { name, emails }
+  targetSlot: null,
 };
 
 const input = document.querySelector("#input");
@@ -42,6 +48,7 @@ const bannerText = document.querySelector("#banner-text");
 const forceBtn = document.querySelector("#force-smtp");
 const results = document.querySelector("#results");
 const list = document.querySelector("#list");
+const renderCapNote = document.querySelector("#render-cap-note");
 const empty = document.querySelector("#empty");
 const progress = document.querySelector("#progress");
 const bar = document.querySelector("#bar");
@@ -51,6 +58,7 @@ const cleanOutput = document.querySelector("#clean-output");
 const cleanSummary = document.querySelector("#clean-summary");
 const includeReview = document.querySelector("#include-review");
 const copyCleanBtn = document.querySelector("#copy-clean");
+const clearListsBtn = document.querySelector("#clear-lists");
 const smtpBox = document.querySelector("#opt-smtp");
 const catchBox = document.querySelector("#opt-catch");
 const helo = document.querySelector("#helo");
@@ -77,7 +85,7 @@ function el(tag, className, text) {
   return node;
 }
 
-function parseAddresses(raw) {
+function extractTokensFromText(raw) {
   const skip = new Set([
     "email",
     "e-mail",
@@ -90,6 +98,24 @@ function parseAddresses(raw) {
     "last name",
   ]);
   const text = raw.replace(/[\u200b\u200c\u200d\ufeff]/g, "");
+  const tokens = [];
+
+  for (let piece of text.split(/[\s,;|]+/)) {
+    piece = piece.replace(/^mailto:/i, "").replace(/^["'<([]+/, "").replace(/[>"')\]]+$/, "").trim();
+    if (!piece || skip.has(piece.toLowerCase())) continue;
+    if (piece.includes("@") || piece.includes(".")) tokens.push(piece);
+  }
+
+  if (!tokens.length) {
+    for (const line of text.split(/\r?\n/)) {
+      const value = line.trim();
+      if (value && !skip.has(value.toLowerCase())) tokens.push(value);
+    }
+  }
+  return tokens;
+}
+
+function parseCombinedAddresses() {
   const seen = new Set();
   const emails = [];
   let dupes = 0;
@@ -106,31 +132,70 @@ function parseAddresses(raw) {
     emails.push(value);
   }
 
-  for (let piece of text.split(/[\s,;|]+/)) {
-    piece = piece.replace(/^mailto:/i, "").replace(/^["'<([]+/, "").replace(/[>"')\]]+$/, "").trim();
-    if (!piece || skip.has(piece.toLowerCase())) continue;
-    if (piece.includes("@") || piece.includes(".")) push(piece);
+  // Merge all uploaded list slots (List 1, List 2, List 3) + textarea
+  for (const slot of state.uploadedLists) {
+    if (!slot || !slot.emails) continue;
+    for (const addr of slot.emails) push(addr);
+  }
+  for (const addr of extractTokensFromText(input.value)) {
+    push(addr);
   }
 
-  if (!emails.length) {
-    for (const line of text.split(/\r?\n/)) {
-      const value = line.trim();
-      if (value && !skip.has(value.toLowerCase())) push(value);
-    }
-  }
   return { emails, dupes };
 }
 
+function renderSlots() {
+  let activeCount = 0;
+  for (let i = 0; i < MAX_UPLOAD_LISTS; i += 1) {
+    const slotEl = document.querySelector(`.slot[data-slot="${i}"]`);
+    const nameEl = document.querySelector(`[data-slot-name="${i}"]`);
+    const metaEl = document.querySelector(`[data-slot-meta="${i}"]`);
+    const removeBtn = document.querySelector(`[data-slot-remove="${i}"]`);
+    const data = state.uploadedLists[i];
+    if (!slotEl || !nameEl || !metaEl || !removeBtn) continue;
+
+    if (data) {
+      activeCount += 1;
+      slotEl.classList.add("filled");
+      nameEl.textContent = data.name;
+      metaEl.textContent = `${data.emails.length.toLocaleString()} emails loaded`;
+      removeBtn.hidden = false;
+    } else {
+      slotEl.classList.remove("filled");
+      nameEl.textContent = "No file uploaded";
+      metaEl.textContent = "Click to upload CSV/TXT";
+      removeBtn.hidden = true;
+    }
+  }
+  if (clearListsBtn) {
+    clearListsBtn.hidden = activeCount === 0;
+  }
+}
+
 function syncComposer() {
-  const { emails, dupes } = parseAddresses(input.value);
-  const tooMany = emails.length > 5000;
-  if (!permit.checked) count.textContent = "Confirm you are allowed to verify this list.";
-  else if (!emails.length) count.textContent = "Add at least one address.";
-  else if (tooMany) count.textContent = "This check runs up to 5,000 addresses at a time. Split the file.";
-  else if (dupes) count.textContent = `${emails.length} addresses, ${dupes} duplicates removed.`;
-  else count.textContent = emails.length === 1 ? "1 address" : `${emails.length} addresses`;
+  renderSlots();
+  const { emails, dupes } = parseCombinedAddresses();
+  const tooMany = emails.length > MAX_EMAILS;
+  const activeLists = state.uploadedLists.filter(Boolean).length;
+  const listTag = activeLists ? ` across ${activeLists} uploaded ${activeLists === 1 ? "list" : "lists"}` : "";
+
+  if (!permit.checked) {
+    count.textContent = "Confirm you are allowed to verify this list.";
+  } else if (!emails.length) {
+    count.textContent = "Upload up to 3 CSV/TXT lists or paste addresses (up to 60,000 total).";
+  } else if (tooMany) {
+    count.textContent = `${emails.length.toLocaleString()} unique addresses loaded — exceeds the ${MAX_EMAILS.toLocaleString()} maximum per run.`;
+  } else if (dupes) {
+    count.textContent = `${emails.length.toLocaleString()} unique addresses${listTag} (${dupes.toLocaleString()} duplicates merged).`;
+  } else {
+    count.textContent =
+      emails.length === 1
+        ? `1 address${listTag}`
+        : `${emails.length.toLocaleString()} addresses${listTag}`;
+  }
+
   verifyBtn.disabled = state.running || !permit.checked || !emails.length || tooMany;
-  verifyBtn.textContent = state.running ? "Checking..." : "Verify list";
+  verifyBtn.textContent = state.running ? "Checking..." : "Verify & Clean Lists";
   stopBtn.hidden = !state.running;
 }
 
@@ -164,25 +229,30 @@ function updateStats() {
   const totals = tally(state.rows);
   for (const key of Object.keys(totals)) {
     const node = document.querySelector(`[data-count="${key}"]`);
-    if (node) node.textContent = String(totals[key]);
+    if (node) node.textContent = totals[key].toLocaleString();
   }
   const cleanRows = getCleanRows();
-  const cleanEmails = cleanRows.map((row) => row.email || row.input);
   if (cleanOutput) {
-    cleanOutput.value = cleanEmails.join("\n");
+    const previewSlice = cleanRows.slice(0, 500).map((row) => row.email || row.input);
+    if (cleanRows.length > 500) {
+      previewSlice.push(`... and ${(cleanRows.length - 500).toLocaleString()} more clean emails (all ${cleanRows.length.toLocaleString()} included in download)`);
+    }
+    cleanOutput.value = previewSlice.join("\n");
   }
   document.querySelectorAll("[data-clean-count]").forEach((node) => {
-    node.textContent = String(cleanRows.length);
+    node.textContent = cleanRows.length.toLocaleString();
   });
   if (cleanSummary) {
     const removed = state.rows.length - cleanRows.length;
     if (!state.rows.length) {
       cleanSummary.textContent =
-        "Verified safe-to-send addresses appear here automatically as checks complete. Hard bounces, syntax errors, and disposable inboxes are removed.";
+        "Verified safe-to-send addresses from all uploaded lists are merged and deduplicated here into one final download. Hard bounces, syntax errors, and disposable inboxes are removed.";
     } else {
-      cleanSummary.textContent = `${cleanRows.length} clean deliverable ${
+      cleanSummary.textContent = `${cleanRows.length.toLocaleString()} clean deliverable ${
         cleanRows.length === 1 ? "address" : "addresses"
-      } ready to export (${removed} risky or bouncing ${removed === 1 ? "address" : "addresses"} removed).`;
+      } ready in one final download (${removed.toLocaleString()} risky or bouncing ${
+        removed === 1 ? "address" : "addresses"
+      } removed).`;
     }
   }
   if (copyCleanBtn) {
@@ -289,19 +359,40 @@ function catchLine(value) {
 function renderList() {
   const visible = state.rows.filter(matches);
   list.replaceChildren();
+  const capped = visible.slice(0, DOM_RENDER_LIMIT);
   const fragment = document.createDocumentFragment();
-  for (const row of visible) fragment.append(rowCard(row));
+  for (const row of capped) fragment.append(rowCard(row));
   list.append(fragment);
+  if (renderCapNote) {
+    if (visible.length > DOM_RENDER_LIMIT) {
+      renderCapNote.hidden = false;
+      renderCapNote.textContent = `Showing first ${DOM_RENDER_LIMIT.toLocaleString()} of ${visible.length.toLocaleString()} matching addresses to keep your browser fast. All ${state.rows.length.toLocaleString()} addresses are included in the final downloads above.`;
+    } else {
+      renderCapNote.hidden = true;
+    }
+  }
   empty.hidden = visible.length !== 0;
 }
 
 function addRows(rows) {
+  const previousCount = state.rows.length;
   state.rows.push(...rows);
   updateStats();
   if (state.filter === "all" && !state.query.trim()) {
-    const fragment = document.createDocumentFragment();
-    for (const row of rows) fragment.append(rowCard(row));
-    list.append(fragment);
+    if (previousCount < DOM_RENDER_LIMIT) {
+      const slice = rows.slice(0, DOM_RENDER_LIMIT - previousCount);
+      const fragment = document.createDocumentFragment();
+      for (const row of slice) fragment.append(rowCard(row));
+      list.append(fragment);
+    }
+    if (renderCapNote) {
+      if (state.rows.length > DOM_RENDER_LIMIT) {
+        renderCapNote.hidden = false;
+        renderCapNote.textContent = `Showing first ${DOM_RENDER_LIMIT.toLocaleString()} of ${state.rows.length.toLocaleString()} addresses to keep your browser fast. All ${state.rows.length.toLocaleString()} addresses are included in the final downloads above.`;
+      } else {
+        renderCapNote.hidden = true;
+      }
+    }
     empty.hidden = state.rows.length !== 0;
   } else {
     renderList();
@@ -329,7 +420,7 @@ function exportRows(kind) {
   if (kind === "clean-txt") {
     const cleanRows = getCleanRows();
     const lines = cleanRows.map((row) => row.email || row.input);
-    download("clearlist-cleaned-emails.txt", lines.join("\n"), "text/plain");
+    download("clearlist-final-cleaned-emails.txt", lines.join("\n"), "text/plain");
     return;
   }
   if (kind === "clean-csv") {
@@ -347,7 +438,7 @@ function exportRows(kind) {
       ];
       lines.push(values.map(csvCell).join(","));
     }
-    download("clearlist-cleaned-emails.csv", lines.join("\n"), "text/csv");
+    download("clearlist-final-cleaned-emails.csv", lines.join("\n"), "text/csv");
     return;
   }
   if (kind === "csv") {
@@ -371,16 +462,37 @@ function exportRows(kind) {
       ];
       lines.push(values.map(csvCell).join(","));
     }
-    download("clearlist-report.csv", lines.join("\n"), "text/csv");
+    download("clearlist-full-audit-report.csv", lines.join("\n"), "text/csv");
     return;
   }
   const lines = state.rows.filter((row) => row.action === kind).map((row) => row.email || row.input);
   download(`clearlist-${kind}.txt`, lines.join("\n"), "text/plain");
 }
 
+async function loadFilesIntoSlots(fileList, preferredSlot = null) {
+  const files = Array.from(fileList || []).slice(0, MAX_UPLOAD_LISTS);
+  if (!files.length) return;
+
+  for (let idx = 0; idx < files.length; idx += 1) {
+    const file = files[idx];
+    const text = await file.text();
+    const extracted = extractTokensFromText(text);
+    let slotIndex = preferredSlot !== null && files.length === 1 ? preferredSlot : state.uploadedLists.findIndex((item) => item === null);
+    if (slotIndex === -1) {
+      slotIndex = idx % MAX_UPLOAD_LISTS;
+    }
+    state.uploadedLists[slotIndex] = {
+      name: file.name,
+      emails: extracted,
+    };
+  }
+  state.targetSlot = null;
+  syncComposer();
+}
+
 async function runVerification() {
-  const { emails } = parseAddresses(input.value);
-  if (!permit.checked || !emails.length || emails.length > 5000 || state.running) return;
+  const { emails } = parseCombinedAddresses();
+  if (!permit.checked || !emails.length || emails.length > MAX_EMAILS || state.running) return;
   const sender = mailFrom.value.trim();
   if (sender && !sender.includes("@")) {
     showBanner("MAIL FROM should be a full email address, or left empty.", "bad");
@@ -400,15 +512,28 @@ async function runVerification() {
 
   const controller = new AbortController();
   state.abort = controller;
-  let cursor = 0;
-  let chunkSize = smtpBox.checked ? 8 : 40;
+
+  const isBulk = emails.length >= 250;
+  const chunkSize = isBulk ? 250 : smtpBox.checked ? 20 : 80;
+  const concurrency = isBulk ? 4 : 1;
+  let completed = 0;
   let network = "disabled";
 
-  try {
-    while (cursor < emails.length) {
-      const chunk = emails.slice(cursor, cursor + chunkSize);
-      progressLabel.textContent = `Checking ${cursor + 1} to ${cursor + chunk.length} of ${emails.length}`;
-      bar.style.width = `${Math.round((cursor / emails.length) * 100)}%`;
+  const chunks = [];
+  for (let i = 0; i < emails.length; i += chunkSize) {
+    chunks.push(emails.slice(i, i + chunkSize));
+  }
+
+  let chunkCursor = 0;
+
+  async function worker() {
+    while (chunkCursor < chunks.length) {
+      const myIndex = chunkCursor;
+      chunkCursor += 1;
+      const chunk = chunks[myIndex];
+      progressLabel.textContent = `Checking ${completed.toLocaleString()} of ${emails.length.toLocaleString()} addresses...`;
+      bar.style.width = `${Math.round((completed / emails.length) * 100)}%`;
+
       const response = await fetch("/api/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -423,6 +548,7 @@ async function runVerification() {
           proxy_url: proxyUrl.value.trim(),
           api_url: apiUrl.value.trim(),
           api_key: apiKey.value.trim(),
+          fast_bulk: isBulk,
         }),
       });
       const payload = await response.json().catch(() => null);
@@ -430,27 +556,36 @@ async function runVerification() {
       network = payload.smtp_network || network;
       if (network === "cloud" && !state.forceSmtp) {
         showBanner(
-          "Cloud Mode active (Port 443 HTTPS + Port 587/2525 + DNS SPF/DMARC): Direct port 25 is blocked on this host, so Clearlist is verifying mailboxes and domain authentication over HTTPS and DNS.",
+          "Cloud Mode active (Port 443 HTTPS + DNS MX/SPF/DMARC): Direct port 25 is blocked on this host, so Clearlist is verifying mailboxes and domain authentication over HTTPS and DNS.",
         );
         forceBtn.hidden = false;
-        chunkSize = 15;
       } else if (network === "blocked" && !state.forceSmtp) {
         showBanner(
-          "This network blocks outbound port 25, so mailbox SMTP checks were skipped. Syntax, DNS, MX, and risk checks still ran. Addresses that fail those checks are unsafe to send. Addresses that pass are not fully confirmed.",
+          "This network blocks outbound port 25, so mailbox SMTP checks were skipped. Syntax, DNS, MX, and risk checks still ran.",
         );
         forceBtn.hidden = false;
-        chunkSize = 40;
       }
       addRows(payload.results || []);
-      cursor += chunk.length;
+      completed += chunk.length;
+      progressLabel.textContent = `Checked ${completed.toLocaleString()} of ${emails.length.toLocaleString()} addresses`;
+      bar.style.width = `${Math.round((completed / emails.length) * 100)}%`;
     }
+  }
+
+  try {
+    const workers = [];
+    for (let w = 0; w < Math.min(concurrency, chunks.length); w += 1) {
+      workers.push(worker());
+    }
+    await Promise.all(workers);
+
     bar.style.width = "100%";
     const totals = tally(state.rows);
-    progressLabel.textContent = `${totals.send} safe to send, ${totals.suppress} to suppress, ${totals.retry} to retry, ${totals.review} to review.`;
+    progressLabel.textContent = `Complete: ${totals.send.toLocaleString()} safe to send, ${totals.suppress.toLocaleString()} to suppress, ${totals.retry.toLocaleString()} to retry, ${totals.review.toLocaleString()} to review.`;
     if (network === "open" || network === "forced" || network === "proxy") showBanner("");
   } catch (error) {
     if (error.name === "AbortError") {
-      showBanner("Stopped. Partial results are kept below.");
+      showBanner("Stopped. Partial results are kept below and ready to download.");
       progressLabel.textContent = "Stopped.";
     } else {
       showBanner(error.message || "Verification failed.", "bad");
@@ -476,18 +611,45 @@ smtpBox.addEventListener("change", () => localStorage.setItem("clearlist-smtp", 
 catchBox.addEventListener("change", () => localStorage.setItem("clearlist-catch", catchBox.checked ? "1" : "0"));
 
 document.querySelector("#sample").addEventListener("click", () => {
-  if (input.value.trim() && !window.confirm("Replace the current list with examples?")) return;
+  if (input.value.trim() && !window.confirm("Replace the current text box with examples?")) return;
   input.value = SAMPLE;
   syncComposer();
 });
-document.querySelector("#upload").addEventListener("click", () => fileInput.click());
+
+document.querySelector("#upload").addEventListener("click", () => {
+  state.targetSlot = null;
+  fileInput.click();
+});
+
+if (clearListsBtn) {
+  clearListsBtn.addEventListener("click", () => {
+    state.uploadedLists = [null, null, null];
+    syncComposer();
+  });
+}
+
+document.querySelectorAll(".slot").forEach((slotEl) => {
+  slotEl.addEventListener("click", (event) => {
+    if (event.target.closest(".slot-remove")) return;
+    state.targetSlot = Number(slotEl.dataset.slot);
+    fileInput.click();
+  });
+});
+
+document.querySelectorAll("[data-slot-remove]").forEach((btn) => {
+  btn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const idx = Number(btn.dataset.slotRemove);
+    state.uploadedLists[idx] = null;
+    syncComposer();
+  });
+});
+
 fileInput.addEventListener("change", async () => {
-  const file = fileInput.files && fileInput.files[0];
+  const files = fileInput.files;
+  if (!files || !files.length) return;
+  await loadFilesIntoSlots(files, state.targetSlot);
   fileInput.value = "";
-  if (!file) return;
-  if (input.value.trim() && !window.confirm("Replace the current list with this file?")) return;
-  input.value = await file.text();
-  syncComposer();
 });
 
 composer.addEventListener("dragover", (event) => {
@@ -498,10 +660,13 @@ composer.addEventListener("dragleave", () => composer.classList.remove("drag"));
 composer.addEventListener("drop", async (event) => {
   event.preventDefault();
   composer.classList.remove("drag");
-  const file = event.dataTransfer?.files?.[0];
-  if (file) input.value = await file.text();
-  else input.value = event.dataTransfer?.getData("text") || input.value;
-  syncComposer();
+  const files = event.dataTransfer?.files;
+  if (files && files.length) {
+    await loadFilesIntoSlots(files, null);
+  } else {
+    input.value = event.dataTransfer?.getData("text") || input.value;
+    syncComposer();
+  }
 });
 
 verifyBtn.addEventListener("click", () => {
@@ -543,7 +708,8 @@ if (includeReview) {
 }
 if (copyCleanBtn) {
   copyCleanBtn.addEventListener("click", async () => {
-    const text = cleanOutput?.value || "";
+    const cleanRows = getCleanRows();
+    const text = cleanRows.map((row) => row.email || row.input).join("\n");
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
