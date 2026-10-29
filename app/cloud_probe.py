@@ -217,7 +217,7 @@ def lookup_email_auth_dns(ascii_domain: str) -> dict:
         "has_dmarc": has_dmarc,
     }
     with _AUTH_DNS_LOCK:
-        if len(_AUTH_DNS_CACHE) > 2000:
+        if len(_AUTH_DNS_CACHE) > 50000:
             _AUTH_DNS_CACHE.clear()
         _AUTH_DNS_CACHE[ascii_domain] = (time.time(), result)
     return dict(result)

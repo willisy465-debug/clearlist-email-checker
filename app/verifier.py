@@ -380,7 +380,7 @@ def lookup_domain(ascii_domain: str) -> dict:
             }
     value = _lookup_domain(ascii_domain)
     with _dns_lock:
-        if len(_dns_cache) > 2000:
+        if len(_dns_cache) > 50000:
             _dns_cache.clear()
         _dns_cache[ascii_domain] = (time.time(), value)
     return {

@@ -9,7 +9,7 @@ const SAMPLE = [
   "info@gmail.com",
 ].join("\n");
 
-const MAX_EMAILS = 60000;
+const MAX_EMAILS = 100000;
 const MAX_UPLOAD_LISTS = 3;
 const DOM_RENDER_LIMIT = 400;
 
@@ -181,7 +181,7 @@ function syncComposer() {
   if (!permit.checked) {
     count.textContent = "Confirm you are allowed to verify this list.";
   } else if (!emails.length) {
-    count.textContent = "Upload up to 3 CSV/TXT lists or paste addresses (up to 60,000 total).";
+    count.textContent = "Upload up to 3 CSV/TXT lists or paste addresses (up to 100,000 total).";
   } else if (tooMany) {
     count.textContent = `${emails.length.toLocaleString()} unique addresses loaded — exceeds the ${MAX_EMAILS.toLocaleString()} maximum per run.`;
   } else if (dupes) {
@@ -512,8 +512,8 @@ async function runVerification() {
   state.abort = controller;
 
   const isBulk = emails.length >= 250;
-  const chunkSize = isBulk ? 250 : smtpBox.checked ? 20 : 80;
-  const concurrency = isBulk ? 4 : 1;
+  const chunkSize = emails.length >= 10000 ? 500 : isBulk ? 250 : smtpBox.checked ? 20 : 80;
+  const concurrency = emails.length >= 10000 ? 6 : isBulk ? 4 : 1;
   let completed = 0;
   let network = "disabled";
 

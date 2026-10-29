@@ -33,7 +33,7 @@ app = FastAPI(title="Clearlist", lifespan=lifespan)
 
 
 class VerifyRequest(BaseModel):
-    emails: list[str] = Field(min_length=1, max_length=500)
+    emails: list[str] = Field(min_length=1, max_length=1000)
     smtp: bool = True
     catch_all: bool = True
     helo: str = ""
