@@ -866,6 +866,7 @@ def _verify_email(raw: str, job: Job) -> dict:
             job.catch_all,
             syntax["ascii_domain"],
             job.cloud_cfg,
+            try_smtp_ports=job.smtp,
         )
     elif job.smtp_mode == "blocked":
         smtp = _smtp_shell(
@@ -889,6 +890,10 @@ def _smtp_shell(state: str, detail: str) -> dict:
     return {"state": state, "code": None, "host": None, "detail": detail, "catch_all": None}
 
 
+_DEAD_PORTS: dict[tuple[str, int], float] = {}
+_DEAD_PORTS_LOCK = threading.Lock()
+
+
 def _cloud_or_alt_port_verify(
     recipient: str,
     hosts: list[str],
@@ -897,8 +902,9 @@ def _cloud_or_alt_port_verify(
     do_catch_all: bool,
     ascii_domain: str,
     cloud_cfg: CloudConfig,
+    try_smtp_ports: bool = True,
 ) -> dict:
-    """When port 25 is blocked on cloud serverless hosts, verify via HTTPS/DNS or alternate SMTP ports (587/2525)."""
+    """Verify via SMTP first (25 / 587 / 2525 or SOCKS5 proxy), then HTTPS 443 + DNS MX/SPF/DMARC."""
     for host in hosts[:2]:
         kind = _classify_host(host)
         if kind == "private":
@@ -907,7 +913,37 @@ def _cloud_or_alt_port_verify(
                 f"Mail server {host} is not on the public internet, so a normal campaign will hard-bounce.",
             ) | {"host": host}
 
-    # First run HTTPS / API / Microsoft 365 / Gravatar / DNS-auth check
+    # 1. Always attempt real SMTP handshake first when SMTP is enabled (and not in 60k fast-bulk mode)
+    if try_smtp_ports and not cloud_cfg.fast_bulk and hosts:
+        primary_host = hosts[0]
+        if _classify_host(primary_host) == "public":
+            now = time.time()
+            for port in (25, 587, 2525):
+                with _DEAD_PORTS_LOCK:
+                    dead_at = _DEAD_PORTS.get((primary_host, port), 0.0)
+                if now - dead_at < _DNS_TTL:
+                    continue
+                try:
+                    with _domain_semaphore(ascii_domain):
+                        smtp_res = _smtp_on_host(
+                            primary_host,
+                            recipient,
+                            helo,
+                            mail_from,
+                            do_catch_all,
+                            ascii_domain,
+                            port=port,
+                            timeout=1.4,
+                            proxy_url=cloud_cfg.proxy_url,
+                        )
+                    if smtp_res["state"] in {"accepted", "rejected", "temporary"}:
+                        return smtp_res
+                except Exception:
+                    with _DEAD_PORTS_LOCK:
+                        _DEAD_PORTS[(primary_host, port)] = time.time()
+                    continue
+
+    # 2. Run HTTPS (Microsoft 365 / Outlook / Gravatar / External API) + DNS SPF/DMARC verification
     return cloud_verify_fallback(
         recipient,
         ascii_domain,

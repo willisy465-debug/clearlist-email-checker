@@ -45,7 +45,6 @@ const stopBtn = document.querySelector("#stop");
 const permit = document.querySelector("#permit");
 const banner = document.querySelector("#banner");
 const bannerText = document.querySelector("#banner-text");
-const forceBtn = document.querySelector("#force-smtp");
 const results = document.querySelector("#results");
 const list = document.querySelector("#list");
 const renderCapNote = document.querySelector("#render-cap-note");
@@ -507,7 +506,6 @@ async function runVerification() {
   empty.hidden = true;
   progress.hidden = false;
   showBanner("");
-  forceBtn.hidden = true;
   syncComposer();
 
   const controller = new AbortController();
@@ -659,19 +657,14 @@ composer.addEventListener("drop", async (event) => {
 });
 
 verifyBtn.addEventListener("click", () => {
-  state.forceSmtp = false;
-  runVerification();
-});
-forceBtn.addEventListener("click", () => {
   state.forceSmtp = true;
-  showBanner("Trying SMTP even though port 25 looked blocked. This can be slow.");
   runVerification();
 });
 stopBtn.addEventListener("click", () => state.abort?.abort());
 input.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
     event.preventDefault();
-    state.forceSmtp = false;
+    state.forceSmtp = true;
     runVerification();
   }
 });
