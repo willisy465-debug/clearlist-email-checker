@@ -119,14 +119,29 @@
         <button type="button" data-filter="retry">Retry later <b data-count="retry">0</b></button>
         <button type="button" data-filter="review">Needs review <b data-count="review">0</b></button>
       </div>
+      <div class="clean-panel" id="clean-panel">
+        <div class="clean-head">
+          <div>
+            <h3>Cleaned list ready for your campaign</h3>
+            <p class="hint" id="clean-summary">Verified safe-to-send addresses appear here automatically as checks complete. Hard bounces, syntax errors, and disposable inboxes are removed.</p>
+          </div>
+          <label class="clean-toggle"><input id="include-review" type="checkbox"> Include role &amp; unconfirmed addresses (Needs review)</label>
+        </div>
+        <textarea id="clean-output" readonly spellcheck="false" rows="5" placeholder="Cleaned deliverable emails will appear here after verification..."></textarea>
+        <div class="clean-actions">
+          <button type="button" class="primary" data-download="clean-csv" disabled>Download Clean CSV (<span data-clean-count>0</span>)</button>
+          <button type="button" class="primary" data-download="clean-txt" disabled>Download Clean TXT (<span data-clean-count>0</span>)</button>
+          <button type="button" id="copy-clean" disabled>Copy Clean List</button>
+          <button type="button" data-download="suppress" disabled>Suppress List (.txt)</button>
+          <button type="button" data-download="csv" disabled>Full Audit Report (.csv)</button>
+        </div>
+      </div>
       <div class="toolbar">
         <input id="search" type="search" placeholder="Filter by address or reason" aria-label="Filter results">
         <div class="downloads">
-          <button type="button" data-download="send">Safe list</button>
-          <button type="button" data-download="suppress">Suppress list</button>
-          <button type="button" data-download="retry">Retry list</button>
-          <button type="button" data-download="review">Review list</button>
-          <button type="button" data-download="csv">Full CSV</button>
+          <button type="button" data-download="send">Safe (.txt)</button>
+          <button type="button" data-download="retry">Retry (.txt)</button>
+          <button type="button" data-download="review">Review (.txt)</button>
         </div>
       </div>
       <div id="list"></div>

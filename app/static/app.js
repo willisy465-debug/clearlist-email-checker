@@ -1,4 +1,6 @@
 const SAMPLE = [
+  "satyan@microsoft.com",
+  "matt@automattic.com",
   "foo@",
   "jane.doe@gmial.com",
   "newsletter@mailinator.com",
@@ -45,6 +47,10 @@ const progress = document.querySelector("#progress");
 const bar = document.querySelector("#bar");
 const progressLabel = document.querySelector("#progress-label");
 const search = document.querySelector("#search");
+const cleanOutput = document.querySelector("#clean-output");
+const cleanSummary = document.querySelector("#clean-summary");
+const includeReview = document.querySelector("#include-review");
+const copyCleanBtn = document.querySelector("#copy-clean");
 const smtpBox = document.querySelector("#opt-smtp");
 const catchBox = document.querySelector("#opt-catch");
 const helo = document.querySelector("#helo");
@@ -149,15 +155,48 @@ function tally(rows) {
   return totals;
 }
 
+function getCleanRows() {
+  const allowed = includeReview?.checked ? new Set(["send", "review"]) : new Set(["send"]);
+  return state.rows.filter((row) => allowed.has(row.action));
+}
+
 function updateStats() {
   const totals = tally(state.rows);
   for (const key of Object.keys(totals)) {
     const node = document.querySelector(`[data-count="${key}"]`);
     if (node) node.textContent = String(totals[key]);
   }
+  const cleanRows = getCleanRows();
+  const cleanEmails = cleanRows.map((row) => row.email || row.input);
+  if (cleanOutput) {
+    cleanOutput.value = cleanEmails.join("\n");
+  }
+  document.querySelectorAll("[data-clean-count]").forEach((node) => {
+    node.textContent = String(cleanRows.length);
+  });
+  if (cleanSummary) {
+    const removed = state.rows.length - cleanRows.length;
+    if (!state.rows.length) {
+      cleanSummary.textContent =
+        "Verified safe-to-send addresses appear here automatically as checks complete. Hard bounces, syntax errors, and disposable inboxes are removed.";
+    } else {
+      cleanSummary.textContent = `${cleanRows.length} clean deliverable ${
+        cleanRows.length === 1 ? "address" : "addresses"
+      } ready to export (${removed} risky or bouncing ${removed === 1 ? "address" : "addresses"} removed).`;
+    }
+  }
+  if (copyCleanBtn) {
+    copyCleanBtn.disabled = cleanRows.length === 0;
+  }
   document.querySelectorAll("[data-download]").forEach((button) => {
     const kind = button.dataset.download;
-    button.disabled = kind === "csv" ? state.rows.length === 0 : !totals[kind];
+    if (kind === "clean-csv" || kind === "clean-txt") {
+      button.disabled = cleanRows.length === 0;
+    } else if (kind === "csv") {
+      button.disabled = state.rows.length === 0;
+    } else {
+      button.disabled = !totals[kind];
+    }
   });
 }
 
@@ -287,6 +326,30 @@ function download(filename, content, type) {
 }
 
 function exportRows(kind) {
+  if (kind === "clean-txt") {
+    const cleanRows = getCleanRows();
+    const lines = cleanRows.map((row) => row.email || row.input);
+    download("clearlist-cleaned-emails.txt", lines.join("\n"), "text/plain");
+    return;
+  }
+  if (kind === "clean-csv") {
+    const cleanRows = getCleanRows();
+    const headers = ["email", "status", "action", "score", "domain_mx", "verification_detail"];
+    const lines = [headers.join(",")];
+    for (const row of cleanRows) {
+      const values = [
+        row.email || row.input,
+        row.status,
+        row.action,
+        row.score,
+        (row.checks?.mx?.hosts || []).join(" "),
+        row.summary,
+      ];
+      lines.push(values.map(csvCell).join(","));
+    }
+    download("clearlist-cleaned-emails.csv", lines.join("\n"), "text/csv");
+    return;
+  }
   if (kind === "csv") {
     const headers = ["input", "email", "status", "action", "bounce", "score", "summary", "suggestion", "mx", "smtp_state", "smtp_code", "smtp_detail", "risks"];
     const lines = [headers.join(",")];
@@ -475,6 +538,25 @@ search.addEventListener("input", () => {
 document.querySelectorAll("[data-download]").forEach((button) => {
   button.addEventListener("click", () => exportRows(button.dataset.download));
 });
+if (includeReview) {
+  includeReview.addEventListener("change", () => updateStats());
+}
+if (copyCleanBtn) {
+  copyCleanBtn.addEventListener("click", async () => {
+    const text = cleanOutput?.value || "";
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      const prev = copyCleanBtn.textContent;
+      copyCleanBtn.textContent = "Copied!";
+      setTimeout(() => {
+        copyCleanBtn.textContent = prev;
+      }, 1800);
+    } catch {
+      cleanOutput.select();
+    }
+  });
+}
 
 fetch("/api/health")
   .then((response) => response.json())

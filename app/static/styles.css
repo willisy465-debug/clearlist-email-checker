@@ -132,7 +132,7 @@ h1 {
 }
 .steps p { margin: 0; color: var(--muted); font-size: 14px; }
 
-.composer, .results-head, .stats, .toolbar, .result {
+.composer, .results-head, .stats, .clean-panel, .toolbar, .result {
   background: var(--card);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
@@ -265,6 +265,41 @@ button:hover { border-color: var(--accent); }
 }
 .stats button b { font-family: var(--serif); font-size: 28px; font-weight: 560; line-height: 1; }
 .stats button.active { background: var(--ink); color: var(--card); border-color: var(--ink); }
+
+.clean-panel {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border-left: 4px solid var(--safe);
+}
+.clean-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.clean-head h3 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 560;
+}
+.clean-toggle {
+  font-size: 14px;
+  color: var(--muted);
+}
+#clean-output {
+  min-height: 120px;
+  margin-top: 10px;
+}
+.clean-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
 
 .toolbar {
   margin: 12px 0;
