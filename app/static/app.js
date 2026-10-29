@@ -554,17 +554,6 @@ async function runVerification() {
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(errorMessage(payload, response.status));
       network = payload.smtp_network || network;
-      if (network === "cloud" && !state.forceSmtp) {
-        showBanner(
-          "Cloud Mode active (Port 443 HTTPS + DNS MX/SPF/DMARC): Direct port 25 is blocked on this host, so Clearlist is verifying mailboxes and domain authentication over HTTPS and DNS.",
-        );
-        forceBtn.hidden = false;
-      } else if (network === "blocked" && !state.forceSmtp) {
-        showBanner(
-          "This network blocks outbound port 25, so mailbox SMTP checks were skipped. Syntax, DNS, MX, and risk checks still ran.",
-        );
-        forceBtn.hidden = false;
-      }
       addRows(payload.results || []);
       completed += chunk.length;
       progressLabel.textContent = `Checked ${completed.toLocaleString()} of ${emails.length.toLocaleString()} addresses`;
@@ -582,7 +571,7 @@ async function runVerification() {
     bar.style.width = "100%";
     const totals = tally(state.rows);
     progressLabel.textContent = `Complete: ${totals.send.toLocaleString()} safe to send, ${totals.suppress.toLocaleString()} to suppress, ${totals.retry.toLocaleString()} to retry, ${totals.review.toLocaleString()} to review.`;
-    if (network === "open" || network === "forced" || network === "proxy") showBanner("");
+    showBanner("");
   } catch (error) {
     if (error.name === "AbortError") {
       showBanner("Stopped. Partial results are kept below and ready to download.");

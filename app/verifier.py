@@ -168,15 +168,9 @@ def begin_job(
         open_, detail = probe_port25(refresh=False)
         if open_:
             mode = "open"
-        elif force_smtp:
-            mode = "forced"
         else:
             mode = "cloud"
-            detail = (
-                "Cloud serverless mode active (Port 443 HTTPS + Port 587/2525 SMTP + DNS SPF/DMARC). "
-                "Direct port 25 is blocked by the cloud host, so Clearlist automatically switches to "
-                "port-25-free verification."
-            )
+            detail = "Cloud verification active (HTTPS 443 + DNS MX/SPF/DMARC)."
     return Job(
         smtp=smtp,
         catch_all=catch_all,
