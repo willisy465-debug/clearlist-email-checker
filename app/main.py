@@ -97,14 +97,14 @@ async def verify(body: VerifyRequest) -> dict:
 
 def _validate_proxy_url(value: str) -> str:
     value = value.strip()
-    if not value:
+    if not value or "@" in value and not value.lower().startswith(("socks5://", "socks5h://", "socks://")) and ":" not in value.split("@", 1)[-1]:
         return ""
     if any(char in value for char in "\r\n\x00 "):
-        raise HTTPException(status_code=400, detail="SOCKS5 proxy URL cannot contain spaces.")
+        return ""
     try:
         parse_socks5_url(value)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError:
+        return ""
     return value
 
 
@@ -113,12 +113,14 @@ def _validate_api_url(value: str) -> str:
     if not value:
         return ""
     if any(char in value for char in "\r\n\x00 "):
-        raise HTTPException(status_code=400, detail="Verification API URL cannot contain spaces.")
-    if not (value.startswith("https://") or value.startswith("http://")):
-        raise HTTPException(
-            status_code=400,
-            detail="Verification API URL must start with https:// or http://.",
-        )
+        return ""
+    # Ignore accidental browser autofill (such as an email address or username)
+    if "@" in value and not value.lower().startswith(("https://", "http://")):
+        return ""
+    if not (value.lower().startswith("https://") or value.lower().startswith("http://")):
+        if "." in value and "/" in value:
+            return "https://" + value
+        return ""
     return value
 
 
