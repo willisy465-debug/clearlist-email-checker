@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from app.cloud_probe import parse_socks5_url
-from app.verifier import check_syntax, classify_smtp, evaluate
-from app.data import in_domain_set, suggest_typo, DISPOSABLE
+from app.verifier import build_risks, check_syntax, classify_smtp, evaluate
+from app.data import in_domain_set, is_bot_or_gibberish_local, local_kinds, suggest_typo, DISPOSABLE
 
 
 def syntax_ok(local: str = "jane", domain: str = "gmail.com") -> dict:
@@ -128,6 +128,26 @@ def main() -> None:
         None,
     )
     assert cloud_ok["action"] == "send" and cloud_ok["status"] == "safe" and cloud_ok["score"] == 86
+    assert cloud_ok["toxicity"] == "clean" and cloud_ok["recommendation"] == "safe_to_send"
+
+    # Alfred-style Toxicity & Threat Detection assertions
+    assert "trap" in local_kinds("spamtrap")
+    assert "litigator" in local_kinds("legal.tcpa")
+    assert "complainer" in local_kinds("removeme")
+    assert "bot" in local_kinds("8493029483")
+    assert is_bot_or_gibberish_local("xkjqwzptlmn")[0]
+
+    bot_risks, _ = build_risks("8493029483", "gmail.com", "gmail.com", True)
+    bot_eval = evaluate("8493029483@gmail.com", syntax, mx, smtp("accepted", "accepted", 250, False), bot_risks, None)
+    assert bot_eval["action"] == "suppress" and bot_eval["toxicity"] == "toxic" and bot_eval["recommendation"] == "do_not_send"
+
+    lit_risks, _ = build_risks("legal.tcpa", "company.com", "company.com", True)
+    lit_eval = evaluate("legal.tcpa@company.com", syntax, mx, smtp("accepted", "accepted", 250, False), lit_risks, None)
+    assert lit_eval["action"] == "suppress" and lit_eval["toxicity"] == "toxic"
+
+    hp_risks, _ = build_risks("seed", "spamhaus.org", "spamhaus.org", True)
+    hp_eval = evaluate("seed@spamhaus.org", syntax, mx, smtp("accepted", "accepted", 250, False), hp_risks, None)
+    assert hp_eval["action"] == "suppress" and hp_eval["toxicity"] == "toxic"
 
     proxy_parsed = parse_socks5_url("socks5://user:pass@127.0.0.1:1080")
     assert proxy_parsed and proxy_parsed["host"] == "127.0.0.1" and proxy_parsed["port"] == 1080

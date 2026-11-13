@@ -1,11 +1,12 @@
 const SAMPLE = [
   "satyan@microsoft.com",
   "matt@automattic.com",
-  "foo@",
-  "jane.doe@gmial.com",
+  "spamtrap@company.com",
+  "legal.tcpa@firm.com",
+  "8493029483@gmail.com",
   "newsletter@mailinator.com",
-  "person@example.invalid",
-  "name@clearlist-no-such-domain-zz12345.com",
+  "jane.doe@gmial.com",
+  "foo@",
   "info@gmail.com",
 ].join("\n");
 
@@ -215,8 +216,13 @@ function errorMessage(payload, status) {
 }
 
 function tally(rows) {
-  const totals = { all: rows.length, send: 0, suppress: 0, retry: 0, review: 0 };
-  for (const row of rows) totals[row.action] = (totals[row.action] || 0) + 1;
+  const totals = { all: rows.length, send: 0, toxic: 0, suppress: 0, retry: 0, review: 0 };
+  for (const row of rows) {
+    totals[row.action] = (totals[row.action] || 0) + 1;
+    if (row.toxicity === "toxic") {
+      totals.toxic += 1;
+    }
+  }
   return totals;
 }
 
@@ -246,13 +252,11 @@ function updateStats() {
     const removed = state.rows.length - cleanRows.length;
     if (!state.rows.length) {
       cleanSummary.textContent =
-        "Verified safe-to-send addresses from all uploaded lists are merged and deduplicated here into one final download. Hard bounces, syntax errors, and disposable inboxes are removed.";
+        "Verified safe-to-send addresses from all uploaded lists are merged and deduplicated here into one final download. Spam traps, toxic addresses, hard bounces, and disposable burners are automatically stripped out.";
     } else {
       cleanSummary.textContent = `${cleanRows.length.toLocaleString()} clean deliverable ${
         cleanRows.length === 1 ? "address" : "addresses"
-      } ready in one final download (${removed.toLocaleString()} risky or bouncing ${
-        removed === 1 ? "address" : "addresses"
-      } removed).`;
+      } ready in one final download (${totals.toxic.toLocaleString()} toxic threats & ${(removed - totals.toxic > 0 ? removed - totals.toxic : 0).toLocaleString()} bounces/risks removed).`;
     }
   }
   if (copyCleanBtn) {
@@ -271,16 +275,24 @@ function updateStats() {
 }
 
 function matches(row) {
-  if (state.filter !== "all" && row.action !== state.filter) return false;
+  if (state.filter === "toxic") {
+    if (row.toxicity !== "toxic") return false;
+  } else if (state.filter !== "all" && row.action !== state.filter) {
+    return false;
+  }
   const query = state.query.trim().toLowerCase();
   if (!query) return true;
   const risks = (row.risks || []).map((item) => `${item.label} ${item.detail}`).join(" ");
-  return `${row.input} ${row.email} ${row.summary} ${risks}`.toLowerCase().includes(query);
+  return `${row.input} ${row.email} ${row.summary} ${row.toxicity || ""} ${row.recommendation || ""} ${risks}`
+    .toLowerCase()
+    .includes(query);
 }
 
 function verdictFor(row) {
+  if (row.toxicity === "toxic") return ["Toxic · Do not send", "bad"];
   if (row.action === "review" && row.status === "unknown") return ["Not confirmed", "unknown"];
-  return VERDICTS[row.action] || ["Needs review", "risk"];
+  if (row.action === "review") return ["Send with caution", "risk"];
+  return VERDICTS[row.action] || ["Send with caution", "risk"];
 }
 
 function rowCard(row) {
@@ -289,8 +301,17 @@ function rowCard(row) {
   const top = el("div", "result-top");
   top.append(el("span", `pill ${tone}`, label));
   top.append(el("span", "bounce", BOUNCE[row.bounce] || row.bounce));
-  const score = el("span", "score", `Score ${row.score}`);
-  score.title = "How likely this address is to accept mail without bouncing. Not inbox placement.";
+  const toxBadge =
+    row.toxicity === "toxic"
+      ? "Threat: High (Toxic)"
+      : row.toxicity === "moderate"
+      ? "Threat: Moderate"
+      : row.toxicity === "high_bounce"
+      ? "Bounce Risk"
+      : "Threat: Clean";
+  top.append(el("span", "bounce", toxBadge));
+  const score = el("span", "score", `Deliverability ${row.score}/100`);
+  score.title = "Deliverability & threat safety score (0–100).";
   top.append(score);
   card.append(top);
   card.append(el("p", "addr", row.email || row.input));
@@ -425,14 +446,15 @@ function exportRows(kind) {
   }
   if (kind === "clean-csv") {
     const cleanRows = getCleanRows();
-    const headers = ["email", "status", "action", "score", "domain_mx", "verification_detail"];
+    const headers = ["email", "recommendation", "deliverability_score", "toxicity", "status", "domain_mx", "verification_detail"];
     const lines = [headers.join(",")];
     for (const row of cleanRows) {
       const values = [
         row.email || row.input,
-        row.status,
-        row.action,
+        row.recommendation || "safe_to_send",
         row.score,
+        row.toxicity || "clean",
+        row.status,
         (row.checks?.mx?.hosts || []).join(" "),
         row.summary,
       ];
@@ -441,17 +463,44 @@ function exportRows(kind) {
     download("clearlist-final-cleaned-emails.csv", lines.join("\n"), "text/csv");
     return;
   }
+  if (kind === "toxic") {
+    const lines = state.rows.filter((row) => row.toxicity === "toxic").map((row) => row.email || row.input);
+    download("clearlist-toxic-removed.txt", lines.join("\n"), "text/plain");
+    return;
+  }
   if (kind === "csv") {
-    const headers = ["input", "email", "status", "action", "bounce", "score", "summary", "suggestion", "mx", "smtp_state", "smtp_code", "smtp_detail", "risks"];
+    const headers = [
+      "input",
+      "email",
+      "recommendation",
+      "rating",
+      "toxicity",
+      "toxicity_score",
+      "deliverability_score",
+      "status",
+      "action",
+      "bounce",
+      "summary",
+      "suggestion",
+      "mx",
+      "smtp_state",
+      "smtp_code",
+      "smtp_detail",
+      "risks",
+    ];
     const lines = [headers.join(",")];
     for (const row of state.rows) {
       const values = [
         row.input,
         row.email,
+        row.recommendation || "",
+        row.rating || "",
+        row.toxicity || "",
+        row.toxicity_score ?? "",
+        row.score,
         row.status,
         row.action,
         row.bounce,
-        row.score,
         row.summary,
         row.suggestion || "",
         (row.checks?.mx?.hosts || []).join(" "),

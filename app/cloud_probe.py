@@ -190,6 +190,7 @@ def lookup_email_auth_dns(ascii_domain: str) -> dict:
     has_spf = False
     spf_strict = False
     has_dmarc = False
+    dnsbl_listed = False
 
     try:
         txt_answers = resolver.resolve(ascii_domain, "TXT")
@@ -211,10 +212,24 @@ def lookup_email_auth_dns(ascii_domain: str) -> dict:
     except dns.exception.DNSException:
         pass
 
+    # Check Spamhaus DBL for known toxic/malicious/phishing/spam domains (skip known major consumer providers)
+    if not in_domain_set(ascii_domain, FREE):
+        try:
+            dbl_answers = resolver.resolve(f"{ascii_domain}.dbl.spamhaus.org", "A")
+            for rdata in dbl_answers:
+                ip_txt = str(rdata)
+                # 127.0.1.2 .. 127.0.1.99 are legitimate DBL listings (127.255.255.* means open resolver block)
+                if ip_txt.startswith("127.0.1.") and ip_txt != "127.0.1.255":
+                    dnsbl_listed = True
+                    break
+        except dns.exception.DNSException:
+            pass
+
     result = {
         "has_spf": has_spf,
         "spf_strict": spf_strict,
         "has_dmarc": has_dmarc,
+        "dnsbl_listed": dnsbl_listed,
     }
     with _AUTH_DNS_LOCK:
         if len(_AUTH_DNS_CACHE) > 50000:

@@ -38,9 +38,11 @@ from app.data import (
     ALIAS,
     DISPOSABLE,
     FREE,
+    HONEYPOT_DOMAINS,
     RESERVED_DOMAINS,
     RESERVED_TLDS,
     in_domain_set,
+    is_bot_or_gibberish_local,
     local_kinds,
     suggest_typo,
 )
@@ -471,19 +473,29 @@ def _has_address(resolver: dns.resolver.Resolver, domain: str) -> bool:
 
 def build_risks(local: str, domain: str, ascii_domain: str, domain_exists: bool) -> tuple[list[dict], str | None]:
     risks: list[dict] = []
+    honeypot_dom = in_domain_set(domain, HONEYPOT_DOMAINS) or in_domain_set(ascii_domain, HONEYPOT_DOMAINS)
     disposable = in_domain_set(domain, DISPOSABLE) or in_domain_set(ascii_domain, DISPOSABLE)
     alias = in_domain_set(domain, ALIAS) or in_domain_set(ascii_domain, ALIAS)
     free = in_domain_set(domain, FREE) or in_domain_set(ascii_domain, FREE)
     suggestion_domain = suggest_typo(ascii_domain, domain_exists)
     suggestion = f"{local}@{suggestion_domain}" if suggestion_domain else None
 
+    if honeypot_dom:
+        risks.append(
+            {
+                "code": "honeypot",
+                "label": "Toxic Spam Trap Domain",
+                "severity": "high",
+                "detail": f"{ascii_domain} is a known anti-spam honeypot / blocklist seeding domain. Never mail this address.",
+            }
+        )
     if disposable:
         risks.append(
             {
                 "code": "disposable",
-                "label": "Disposable",
+                "label": "Toxic Disposable",
                 "severity": "high",
-                "detail": f"{ascii_domain} is a known temporary inbox domain.",
+                "detail": f"{ascii_domain} is a temporary burner inbox domain. Remove to protect deliverability.",
             }
         )
     elif alias:
@@ -501,7 +513,7 @@ def build_risks(local: str, domain: str, ascii_domain: str, domain_exists: bool)
                 "code": "typo",
                 "label": "Likely typo",
                 "severity": "high",
-                "detail": f"{ascii_domain} looks like a typo of {suggestion_domain}.",
+                "detail": f"{ascii_domain} looks like a typo of {suggestion_domain}. Typo domains are frequently spam traps.",
             }
         )
     for kind in local_kinds(local):
@@ -509,9 +521,37 @@ def build_risks(local: str, domain: str, ascii_domain: str, domain_exists: bool)
             risks.append(
                 {
                     "code": "trap",
-                    "label": "System mailbox",
+                    "label": "Toxic Spam Trap",
                     "severity": "high",
-                    "detail": "This name is a system mailbox or a common spam-trap pattern. Do not mail it.",
+                    "detail": "This mailbox is a spam trap, feedback loop, or system blackhole. Mailing it damages sender reputation.",
+                }
+            )
+        elif kind == "litigator":
+            risks.append(
+                {
+                    "code": "litigator",
+                    "label": "Toxic Legal / Compliance",
+                    "severity": "high",
+                    "detail": "Legal, compliance, privacy, or TCPA/GDPR enforcement mailbox. High litigation and complaint risk.",
+                }
+            )
+        elif kind == "complainer":
+            risks.append(
+                {
+                    "code": "complainer",
+                    "label": "Toxic Complainer",
+                    "severity": "high",
+                    "detail": "Hostile or opt-out/complaint mailbox pattern that triggers spam reports.",
+                }
+            )
+        elif kind == "bot":
+            _, bot_reason = is_bot_or_gibberish_local(local)
+            risks.append(
+                {
+                    "code": "bot",
+                    "label": "Toxic Bot / Gibberish",
+                    "severity": "high",
+                    "detail": bot_reason or "High-entropy or numeric bot-generated mailbox pattern.",
                 }
             )
         elif kind == "role":
@@ -520,19 +560,19 @@ def build_risks(local: str, domain: str, ascii_domain: str, domain_exists: bool)
                     "code": "role",
                     "label": "Role address",
                     "severity": "medium",
-                    "detail": "Shared addresses such as info@ or support@ often accept mail and draw more complaints.",
+                    "detail": "Shared departmental inbox (info@, support@, sales@). Lower engagement and higher complaint rate.",
                 }
             )
         elif kind == "test":
             risks.append(
                 {
                     "code": "test",
-                    "label": "Test name",
-                    "severity": "medium",
-                    "detail": "The mailbox name looks like a placeholder or a test address.",
+                    "label": "Toxic Test / Bogus",
+                    "severity": "high",
+                    "detail": "Placeholder or bogus test mailbox name that causes bounces or spam trap hits.",
                 }
             )
-    if free and not disposable:
+    if free and not disposable and not honeypot_dom:
         risks.append(
             {
                 "code": "free",
@@ -572,6 +612,45 @@ def evaluate(
         else:
             smtp_ok = None
         email = syntax["email"] if syntax["ok"] else original.strip()
+
+        high_toxic = {
+            "honeypot",
+            "disposable",
+            "trap",
+            "litigator",
+            "complainer",
+            "bot",
+            "test",
+            "dnsbl",
+            "typo",
+            "implicit_mx",
+        }
+        mod_toxic = {"role", "catch_all", "alias"}
+        present_codes = {item["code"] for item in risks}
+
+        if present_codes & high_toxic:
+            toxicity = "toxic"
+            toxicity_score = 92
+        elif present_codes & mod_toxic:
+            toxicity = "moderate"
+            toxicity_score = 48
+        elif action == "suppress":
+            toxicity = "high_bounce"
+            toxicity_score = 80
+        else:
+            toxicity = "clean"
+            toxicity_score = 0
+
+        if action == "send":
+            recommendation = "safe_to_send"
+            rating = "excellent" if score >= 88 else "good"
+        elif action in {"review", "retry"}:
+            recommendation = "send_with_caution"
+            rating = "fair" if score >= 60 else "poor"
+        else:
+            recommendation = "do_not_send"
+            rating = "bad"
+
         return {
             "input": original,
             "email": email,
@@ -579,6 +658,10 @@ def evaluate(
             "action": action,
             "bounce": bounce,
             "score": score,
+            "toxicity": toxicity,
+            "toxicity_score": toxicity_score,
+            "recommendation": recommendation,
+            "rating": rating,
             "suggestion": suggestion,
             "summary": summary,
             "risks": risks,
@@ -659,6 +742,16 @@ def evaluate(
                 "label": "No MX",
                 "severity": "high",
                 "detail": "The domain has no MX record. Mail would fall back to an address record.",
+            }
+        )
+    auth_info = smtp.get("auth_dns") or {}
+    if auth_info.get("dnsbl_listed"):
+        risks.append(
+            {
+                "code": "dnsbl",
+                "label": "Toxic Blocklisted Domain",
+                "severity": "high",
+                "detail": "Domain is listed on Spamhaus DBL for spam, phishing, or abuse. Never mail this domain.",
             }
         )
     codes = {item["code"] for item in risks}
@@ -746,30 +839,68 @@ def evaluate(
     elif "role" in codes and status == "unknown":
         summary = f"{summary} The mailbox name is a role address."
 
-    if "test" in codes and status == "safe":
-        status, action, score = "risky", "review", 40
-        summary = "The SMTP recipient check passed, but the mailbox name looks like a test or placeholder."
+    if "test" in codes and status != "invalid":
+        status, action, bounce, score = "risky", "suppress", "hard", 14
+        summary = (
+            "Toxic test or placeholder mailbox name (such as test@ or fake@). "
+            "Automatically removed to prevent bounces and spam-trap hits."
+        )
+
+    if "bot" in codes and status != "invalid":
+        status, action, bounce, score = "risky", "suppress", "hard", 12
+        summary = (
+            "Toxic bot-generated or gibberish mailbox pattern detected. "
+            "Automatically removed to protect sender reputation."
+        )
+
+    if "complainer" in codes and status != "invalid":
+        status, action, bounce, score = "risky", "suppress", "none", 10
+        summary = (
+            "Toxic complainer or opt-out mailbox pattern detected. "
+            "Automatically removed to prevent spam complaints."
+        )
+
+    if "litigator" in codes and status != "invalid":
+        status, action, bounce, score = "risky", "suppress", "none", 8
+        summary = (
+            "Toxic legal, compliance, or TCPA/GDPR enforcement mailbox detected. "
+            "Automatically removed to protect your campaign from legal/compliance complaints."
+        )
 
     if "trap" in codes and status != "invalid":
         status, action = "risky", "suppress"
         if smtp["state"] == "accepted":
             bounce = "none"
-            score = 15
-            summary = "The server accepted this mailbox, but the name is a system or trap-style address. Do not send marketing mail to it."
+            score = 10
+            summary = "Toxic spam trap or system blackhole mailbox. Automatically removed to protect sender reputation."
         else:
             bounce = "unknown"
-            score = 12
-            summary = "This is a system or trap-style mailbox. Do not send marketing mail to it."
+            score = 8
+            summary = "Toxic spam trap or system blackhole mailbox. Automatically removed to protect sender reputation."
+
+    if "honeypot" in codes and status != "invalid":
+        status, action, bounce, score = "risky", "suppress", "hard", 2
+        summary = (
+            "Toxic anti-spam honeypot / blocklist domain detected. "
+            "Automatically removed to prevent domain/IP blocklisting."
+        )
+
+    if "dnsbl" in codes and status != "invalid":
+        status, action, bounce, score = "risky", "suppress", "hard", 5
+        summary = (
+            "Toxic domain listed on Spamhaus DBL blocklist. "
+            "Automatically removed to protect deliverability."
+        )
 
     if "disposable" in codes and status != "invalid":
-        status, action, bounce, score = "risky", "suppress", "hard", 8
+        status, action, bounce, score = "risky", "suppress", "hard", 6
         if smtp["state"] == "accepted":
             summary = (
-                "The server accepted a disposable inbox. Suppress it anyway. "
-                "These addresses expire, bounce later, or hurt sender reputation."
+                "Toxic disposable burner inbox. Automatically removed — "
+                "these addresses expire, bounce later, and hurt sender reputation."
             )
         else:
-            summary = "Disposable inbox. Suppress it. These addresses expire, bounce, or hurt sender reputation."
+            summary = "Toxic disposable burner inbox. Automatically removed to protect deliverability."
 
     if "alias" in codes and status == "safe":
         score = min(score, 80)

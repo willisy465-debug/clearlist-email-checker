@@ -45,8 +45,8 @@
       </li>
       <li>
         <span>04</span>
-        <strong>Risk</strong>
-        <p>Known disposable inboxes, typos, role accounts, catch-all servers, and trap-style names.</p>
+        <strong>Toxicity &amp; Threats</strong>
+        <p>Alfred-style threat detection: removes spam traps, honeypots, litigators, bots, complainers, disposable burners, and blocklisted domains.</p>
       </li>
     </ol>
 
@@ -134,25 +134,27 @@
       </div>
       <div class="stats" id="stats">
         <button type="button" data-filter="all" class="active">All <b data-count="all">0</b></button>
-        <button type="button" data-filter="send">Safe to send <b data-count="send">0</b></button>
-        <button type="button" data-filter="suppress">Suppress <b data-count="suppress">0</b></button>
+        <button type="button" data-filter="send">Best Deliverability <b data-count="send">0</b></button>
+        <button type="button" data-filter="toxic">Toxic Removed <b data-count="toxic">0</b></button>
+        <button type="button" data-filter="suppress">Do Not Send <b data-count="suppress">0</b></button>
         <button type="button" data-filter="retry">Retry later <b data-count="retry">0</b></button>
-        <button type="button" data-filter="review">Needs review <b data-count="review">0</b></button>
+        <button type="button" data-filter="review">Send w/ Caution <b data-count="review">0</b></button>
       </div>
       <div class="clean-panel" id="clean-panel">
         <div class="clean-head">
           <div>
-            <h3>Final Master Cleaned List (Merged from all uploaded lists)</h3>
-            <p class="hint" id="clean-summary">Verified safe-to-send addresses from all uploaded lists are merged and deduplicated here into one final download. Hard bounces, syntax errors, and disposable inboxes are removed.</p>
+            <h3>Final Master Cleaned List (Toxic &amp; Bouncing Emails Removed)</h3>
+            <p class="hint" id="clean-summary">Verified safe-to-send addresses from all uploaded lists are merged and deduplicated here into one final download. Spam traps, toxic addresses, hard bounces, and disposable burners are automatically stripped out.</p>
           </div>
-          <label class="clean-toggle"><input id="include-review" type="checkbox"> Include role &amp; unconfirmed addresses (Needs review)</label>
+          <label class="clean-toggle"><input id="include-review" type="checkbox"> Maximum Reach Mode (Include role &amp; catch-all "Send with Caution" emails)</label>
         </div>
         <textarea id="clean-output" readonly spellcheck="false" rows="5" placeholder="Cleaned deliverable emails will appear here after verification..."></textarea>
         <div class="clean-actions">
           <button type="button" class="primary" data-download="clean-csv" disabled>Download Final Clean CSV (<span data-clean-count>0</span>)</button>
           <button type="button" class="primary" data-download="clean-txt" disabled>Download Final Clean TXT (<span data-clean-count>0</span>)</button>
           <button type="button" id="copy-clean" disabled>Copy Final Clean List</button>
-          <button type="button" data-download="suppress" disabled>Suppress List (.txt)</button>
+          <button type="button" data-download="toxic" disabled>Toxic Removed (.txt)</button>
+          <button type="button" data-download="suppress" disabled>Do Not Send List (.txt)</button>
           <button type="button" data-download="csv" disabled>Full Audit Report (.csv)</button>
         </div>
       </div>
